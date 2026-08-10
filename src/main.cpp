@@ -23,29 +23,46 @@
 #include <AccelStepper.h>
 #include <Wire.h>
 #include <MPU6050_light.h>
+#include <SPI.h>
+#include <MD_MAX72xx.h> 
+
+
+#define HARDWARE_TYPE MD_MAX72XX::FC16_HW
+#define MAX_DEVICES 4
+#define CS_PIN 5
 
 
 //Code for the intializing the stepper motors
+//STEPPER 1 PINS
 const int step1Pin = 26;
 const int dir1Pin = 25;
 
+//STEPPER 2 PINS
 const int step2Pin = 17;
 const int dir2Pin = 16;
 
+//DISPLAY PINS PINS
 const int DIN = 23;
 const int CS = 5;
 const int CLK = 18;
  
-const float kP = 1;
+//CONSTANTS FOR PID
+const float kP = 10;
 const float kI = 0.1;
 const float kD = 0.1;
 
 const double idealAngle = 0.0;
+const double maxMotorSpeed = 400.0;
+const double motorAcceleration = 150.0;
+const double deadband = 0.5;
+const double maxIntegral = 100.0;
 double currentAngle = 0.0;
 double totalError = 0.0;
 double previousError = 0.0;
-double speed = 0.0;
+double filteredSpeed = 0.0;
 
+//Defines the displays
+MD_MAX72XX matrix(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 
 AccelStepper stepper1(AccelStepper::DRIVER, step1Pin, dir1Pin);
 AccelStepper stepper2(AccelStepper::DRIVER, step2Pin, dir2Pin);
@@ -56,10 +73,13 @@ AccelStepper stepper2(AccelStepper::DRIVER, step2Pin, dir2Pin);
 MPU6050 mpu(Wire); //SDA = PIN 21, SCL = PIN 22
 unsigned long timer = 0;
 
-
-double calculatePID();
+//METHODS DEFINITION
+double calculatePID(); 
+void runExpressions(int (&matrix)[8][8]);
+void setBothSpeed(double speed);
 
 void setup() {
+  matrix.begin();
   
   Serial.begin(115200);
   Serial.print("hello");
@@ -76,13 +96,13 @@ void setup() {
   mpu.calcOffsets(); // gyro and accelero
   Serial.println("Done!\n");
 
-  stepper1.setMaxSpeed(800);
-  stepper1.setAcceleration(400);
-  stepper1.setSpeed(200);
+  stepper1.setMaxSpeed(maxMotorSpeed);
+  stepper1.setAcceleration(motorAcceleration);
+  stepper1.setSpeed(0);
 
-  stepper2.setMaxSpeed(800);
-  stepper2.setAcceleration(400);
-  stepper2.setSpeed(200);
+  stepper2.setMaxSpeed(maxMotorSpeed);
+  stepper2.setAcceleration(motorAcceleration);
+  stepper2.setSpeed(0);
 }
 
 void loop() {
@@ -97,23 +117,43 @@ void loop() {
 	Serial.println(mpu.getAngleZ());
 	timer = millis();  
   }
-  double speed = calculatePID();
-  stepper1.setSpeed(speed);
-  stepper2.setSpeed(speed);
-  stepper1.run();
-  stepper2.run();
+  double rawSpeed = calculatePID();
+  if (rawSpeed > -deadband && rawSpeed < deadband) {
+    rawSpeed = 0.0;
+  }
+  rawSpeed = constrain(rawSpeed, -maxMotorSpeed, maxMotorSpeed);
+  filteredSpeed += (rawSpeed - filteredSpeed) * 0.2;
+
+  setBothSpeed(filteredSpeed);
+  stepper1.runSpeed();
+  stepper2.runSpeed();
 }
 
 double calculatePID() {
   double error = idealAngle - currentAngle;
   totalError += error;
+  totalError = constrain(totalError, -maxIntegral, maxIntegral);
   double derivative = error - previousError;
   double output = kP * error + kI * totalError + kD * derivative;
   previousError = error;
   return output;
 }
 
-void setSpeed(double speed){
+void setBothSpeed(double speed){
   stepper1.setSpeed(speed);
   stepper2.setSpeed(speed);
+}
+
+void runExpressions(int (&matrixData)[7][7]){
+  for(int i = 0; i < 7; i++){
+    for(int j = 0; j < 7; j++){
+      if(matrixData[i][j] == 1){
+        matrix.setPoint(i, j, true);
+      }
+      else{
+        matrix.setPoint(i, j, false);
+
+      }
+    }
+  }
 }
