@@ -25,6 +25,11 @@
 #include <MPU6050_light.h>
 #include <SPI.h>
 #include <MD_MAX72xx.h> 
+#include <BLEGamepadClient.h>
+#include <StorageExpressions.cpp>
+
+
+XboxController controller;
 
 
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
@@ -67,22 +72,25 @@ MD_MAX72XX matrix(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 AccelStepper stepper1(AccelStepper::DRIVER, step1Pin, dir1Pin);
 AccelStepper stepper2(AccelStepper::DRIVER, step2Pin, dir2Pin);
 
-
-
 // MPU Constants
 MPU6050 mpu(Wire); //SDA = PIN 21, SCL = PIN 22
 unsigned long timer = 0;
+
+//Variables for the Eye Shape
+bool winking = false;
 
 //METHODS DEFINITION
 double calculatePID(); 
 void runExpressions(int (&matrix)[8][8]);
 void setBothSpeed(double speed);
+void handleXboxControllerEvents();
 
 void setup() {
   matrix.begin();
   
   Serial.begin(115200);
   Serial.print("hello");
+  controller.begin();
   Wire.begin();
   
   byte status = mpu.begin();
@@ -118,15 +126,10 @@ void loop() {
 	timer = millis();  
   }
   double rawSpeed = calculatePID();
-  if (rawSpeed > -deadband && rawSpeed < deadband) {
-    rawSpeed = 0.0;
-  }
-  rawSpeed = constrain(rawSpeed, -maxMotorSpeed, maxMotorSpeed);
-  filteredSpeed += (rawSpeed - filteredSpeed) * 0.2;
 
-  setBothSpeed(filteredSpeed);
-  stepper1.runSpeed();
-  stepper2.runSpeed();
+  setBothSpeed(rawSpeed);
+  handleXboxControllerEvents();
+  
 }
 
 double calculatePID() {
@@ -142,11 +145,13 @@ double calculatePID() {
 void setBothSpeed(double speed){
   stepper1.setSpeed(speed);
   stepper2.setSpeed(speed);
+  stepper1.runSpeed();
+  stepper2.runSpeed();
 }
 
-void runExpressions(int (&matrixData)[7][7]){
-  for(int i = 0; i < 7; i++){
-    for(int j = 0; j < 7; j++){
+void runLeftExpressions(int (&matrixData)[8][8]){
+  for(int i = 0; i < 8; i++){
+    for(int j = 0; j < 8; j++){
       if(matrixData[i][j] == 1){
         matrix.setPoint(i, j, true);
       }
@@ -156,4 +161,41 @@ void runExpressions(int (&matrixData)[7][7]){
       }
     }
   }
+}
+
+
+void runRightExpressions(int (&matrixData)[8][8]){
+  for(int i = 0; i < 8; i++){
+    for(int j = 8; j < 16; j++){
+      if(matrixData[i][j] == 1){
+        matrix.setPoint(i, j, true);
+      }
+      else{
+        matrix.setPoint(i, j, false);
+
+      }
+    }
+  }
+}
+void handleXboxControllerEvents() {
+  if (controller.isConnected()) {
+      XboxControlsState s;
+      controller.read(&s);
+
+      Serial.printf("lstick: %.2f,%.2f, rstick: %.2f,%.2f\n",
+        s.leftStickX, s.leftStickY, s.rightStickX, s.rightStickY);
+      if (s.buttonA){
+        runLeftExpressions(normalFace);
+        runRightExpressions(normalFace);
+      }
+      else if (s.buttonB){
+        runLeftExpressions(LeftWinking);
+        runRightExpressions(RightWinking);
+      }
+      else{
+        matrix.clear();
+      }
+    } else {
+      Serial.println("controller not connected");
+    }
 }
